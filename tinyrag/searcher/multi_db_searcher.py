@@ -1,13 +1,14 @@
 import os
 from typing import Dict, List, Optional, Tuple
 
-from loguru import logger
+from tinyrag.logging_utils import logger
 
 from tinyrag.embedding.hf_emb import HFSTEmbedding
 from tinyrag.searcher.bm25_recall.bm25_retriever import BM25Retriever
 from tinyrag.searcher.emb_recall.emb_retriever import EmbRetriever
 from tinyrag.searcher.reranker.reanker_bge_m3 import RerankerBGEM3
-from tinyrag.searcher.searcher import rrf_fuse
+from tinyrag.searcher.pipeline import run_search_advanced
+from tinyrag.searcher.recall import MultiDBRecallProvider
 
 
 class MultiDBSearcher:
@@ -94,44 +95,21 @@ class MultiDBSearcher:
         bm25_weight: float = 1.0,
         emb_weight: float = 1.0,
     ) -> list:
-        recall_k = recall_k if recall_k is not None else 2 * top_n
-        db_num = max(1, len(self._bm25_list))
-        per_db_k = max(1, (recall_k + db_num - 1) // db_num)
-
-        bm25_all: List[Tuple[int, str, float]] = []
-        for _, bm25 in self._bm25_list:
-            bm25_all.extend(bm25.search(bm25_query, per_db_k))
-
-        bm25_all.sort(key=lambda x: x[2], reverse=True)
-
-        query_emb = self.emb_model.get_embedding(emb_query_text)
-        emb_all: List[Tuple[int, str, float]] = []
-        for _, emb in self._emb_list:
-            emb_all.extend(emb.search(query_emb, per_db_k))
-
-        emb_all.sort(key=lambda x: x[2])  # L2 距离越小越相似
-
-        fusion_method = (fusion_method or "rrf").lower().strip()
-        if fusion_method == "rrf":
-            candidate_texts = rrf_fuse(
-                bm25_all,
-                emb_all,
-                top_k=recall_k,
-                k=rrf_k,
-                bm25_weight=bm25_weight,
-                emb_weight=emb_weight,
-            )
-        else:
-            seen = set()
-            candidate_texts = []
-            for _, text, _ in bm25_all:
-                if text not in seen:
-                    candidate_texts.append(text)
-                    seen.add(text)
-            for _, text, _ in emb_all:
-                if text not in seen:
-                    candidate_texts.append(text)
-                    seen.add(text)
-            candidate_texts = candidate_texts[:recall_k]
-
-        return self.ranker.rank(rerank_query, candidate_texts, top_n)
+        recall_provider = MultiDBRecallProvider(
+            bm25_list=[bm25 for _base, bm25 in self._bm25_list],
+            emb_list=[emb for _base, emb in self._emb_list],
+            emb_model=self.emb_model,
+        )
+        return run_search_advanced(
+            recall_provider=recall_provider,
+            ranker=self.ranker,
+            rerank_query=rerank_query,
+            bm25_query=bm25_query,
+            emb_query_text=emb_query_text,
+            top_n=top_n,
+            recall_k=recall_k,
+            fusion_method=fusion_method,
+            rrf_k=rrf_k,
+            bm25_weight=bm25_weight,
+            emb_weight=emb_weight,
+        )

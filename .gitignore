@@ -1,6 +1,5 @@
 .env
 eval
 models
-data 
 tiny-rag-advanced.txt
 __pycache__

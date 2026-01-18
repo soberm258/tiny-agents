@@ -195,6 +195,29 @@ class SearchOnlineTool(BaseTool):
 
 
 def format_observation_for_prompt(result: Dict[str, Any], *, max_chars_per_item: int = 500) -> str:
+    def format_law_location(meta: Dict[str, Any]) -> str:
+        law = str(meta.get("law") or "").strip()
+        book = str(meta.get("book") or "").strip() or "未知编"
+        chapter = str(meta.get("chapter") or "").strip() or "未知章"
+        section = str(meta.get("section") or "").strip() or "未分节"
+        article = str(meta.get("article") or "").strip() or "未知条"
+        parts = [p for p in [law, book, chapter, section, article] if p]
+        return " | ".join(parts)
+
+    def format_source(meta: Dict[str, Any]) -> str:
+        source_path = str(meta.get("source_path") or "").strip()
+        page = meta.get("page", None)
+        if meta.get("law") or meta.get("article") or meta.get("book") or meta.get("chapter"):
+            loc = format_law_location(meta)
+            if source_path:
+                return f"{source_path} | {loc}"
+            return loc
+        if source_path:
+            if page:
+                return f"{source_path} 第{page}页"
+            return source_path
+        return "未知来源"
+
     items = result.get("items") or []
     lines: List[str] = []
     err = result.get("error")
@@ -206,14 +229,12 @@ def format_observation_for_prompt(result: Dict[str, Any], *, max_chars_per_item:
         if max_chars_per_item and len(text) > max_chars_per_item:
             text = text[:max_chars_per_item] + "..."
         meta = item.get("meta") or {}
-        source_path = meta.get("source_path", "")
-        page = meta.get("page", None)
         url = meta.get("url", "")
         lines.append(f"[{rank}] {text}")
         if url:
-            lines.append(f"url={url}")
+            lines.append(f"source={url}")
         else:
-            lines.append(f"source_path={source_path} page={page}")
+            lines.append(f"source={format_source(meta) if isinstance(meta, dict) else '未知来源'}")
     if not items and not err:
         lines.append("（无结果）")
     return "\n".join(lines).strip()

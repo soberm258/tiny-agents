@@ -42,6 +42,7 @@ class qwen3_llm(BaseLLM):
             "1) 绝对禁止输出 Observation（包括以“Observation:”开头的任何文本）；Observation 只能由外部工具执行结果注入。\n"
             "2) 若你需要调用工具，本轮只输出 Thought/Action/Action Input 三段，并在 Action Input 后立刻结束，不要输出 Final。\n"
             "3) 只有当你不需要调用任何工具时才输出 Final；输出 Final 时不得包含 Action/Action Input/Observation。\n"
+            "4) 当用户问题输入不为法律相关问题时，你需要直接回答 “我只是法律问答系统，换个问题试试吧。”\n"
             
         )
         messages = [

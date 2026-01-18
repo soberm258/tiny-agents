@@ -3,13 +3,16 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from loguru import logger
+from tinyrag.logging_utils import logger
 from tqdm import tqdm
 
 from tinyrag.embedding.hf_emb import HFSTEmbedding
 from tinyrag.searcher.bm25_recall.bm25_retriever import BM25Retriever
 from tinyrag.searcher.emb_recall.emb_retriever import EmbRetriever
 from tinyrag.searcher.reranker.reanker_bge_m3 import RerankerBGEM3
+from tinyrag.searcher.pipeline import run_search_advanced
+from tinyrag.searcher.recall import SingleDBRecallProvider
+from tinyrag.searcher.fusion.rrf import rrf_fuse as _rrf_fuse_impl
 
 
 BM25RecallItem = Tuple[int, Any, float]
@@ -45,32 +48,15 @@ def rrf_fuse(
     bm25_weight: float = 1.0,
     emb_weight: float = 1.0,
 ) -> List[Any]:
-    """
-    Reciprocal Rank Fusion (RRF)：
-    - BM25：按分数从高到低排序
-    - 向量：按距离从小到大排序（L2 越小越相似）
-    """
-    top_k = max(1, int(top_k))
-    k = max(1, int(k))
-
-    score_map: Dict[str, float] = {}
-    item_map: Dict[str, Any] = {}
-
-    bm25_sorted = sorted(bm25_list, key=lambda x: x[2], reverse=True)
-    emb_sorted = sorted(emb_list, key=lambda x: x[2])
-
-    for rank, (_idx, item, _score) in enumerate(bm25_sorted, start=1):
-        key = _item_key(item)
-        item_map.setdefault(key, item)
-        score_map[key] = score_map.get(key, 0.0) + float(bm25_weight) * (1.0 / (k + rank))
-
-    for rank, (_idx, item, _dist) in enumerate(emb_sorted, start=1):
-        key = _item_key(item)
-        item_map.setdefault(key, item)
-        score_map[key] = score_map.get(key, 0.0) + float(emb_weight) * (1.0 / (k + rank))
-
-    fused = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
-    return [item_map[key] for key, _ in fused[:top_k]]
+    # 兼容导出：外部可能会从 tinyrag.searcher.searcher 导入 rrf_fuse
+    return _rrf_fuse_impl(
+        bm25_list,
+        emb_list,
+        top_k=top_k,
+        k=k,
+        bm25_weight=bm25_weight,
+        emb_weight=emb_weight,
+    )
 
 
 class Searcher:
@@ -147,44 +133,24 @@ class Searcher:
         bm25_weight: float = 1.0,
         emb_weight: float = 1.0,
     ) -> List[Tuple[float, Any]]:
-        top_n = max(1, int(top_n))
-        recall_k = int(recall_k) if recall_k is not None else 2 * top_n
-        recall_k = max(top_n, recall_k)
-
-        bm25_recall_list = self.bm25_retriever.search(bm25_query, recall_k)
-        logger.info("bm25 recall text num: {}", len(bm25_recall_list))
-
-        query_emb = self.emb_model.get_embedding(emb_query_text)
-        emb_recall_list = self.emb_retriever.search(query_emb, recall_k)
-        logger.info("emb recall text num: {}", len(emb_recall_list))
-
-        fusion_method = (fusion_method or "rrf").lower().strip()
-        if fusion_method == "rrf":
-            candidate_items = rrf_fuse(
-                bm25_recall_list,
-                emb_recall_list,
-                top_k=recall_k,
-                k=rrf_k,
-                bm25_weight=bm25_weight,
-                emb_weight=emb_weight,
-            )
-        else:
-            seen = set()
-            candidate_items = []
-            for _idx, item, _score in sorted(bm25_recall_list, key=lambda x: x[2], reverse=True):
-                key = _item_key(item)
-                if key not in seen:
-                    candidate_items.append(item)
-                    seen.add(key)
-            for _idx, item, _dist in sorted(emb_recall_list, key=lambda x: x[2]):
-                key = _item_key(item)
-                if key not in seen:
-                    candidate_items.append(item)
-                    seen.add(key)
-            candidate_items = candidate_items[:recall_k]
-
-        logger.info("fusion candidate text num: {}", len(candidate_items))
-        return self.ranker.rank(rerank_query, candidate_items, top_n)
+        recall_provider = SingleDBRecallProvider(
+            bm25_retriever=self.bm25_retriever,
+            emb_model=self.emb_model,
+            emb_retriever=self.emb_retriever,
+        )
+        return run_search_advanced(
+            recall_provider=recall_provider,
+            ranker=self.ranker,
+            rerank_query=rerank_query,
+            bm25_query=bm25_query,
+            emb_query_text=emb_query_text,
+            top_n=top_n,
+            recall_k=recall_k,
+            fusion_method=fusion_method,
+            rrf_k=rrf_k,
+            bm25_weight=bm25_weight,
+            emb_weight=emb_weight,
+        )
 
     def search(self, query: str, top_n: int = 3) -> List[Tuple[float, Any]]:
         return self.search_advanced(
@@ -195,4 +161,3 @@ class Searcher:
             recall_k=2 * max(1, int(top_n)),
             fusion_method="dedup",
         )
-
