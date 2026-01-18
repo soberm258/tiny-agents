@@ -84,7 +84,7 @@
 - [clip-ViT-B-32](https://huggingface.co/sentence-transformers/clip-ViT-B-32)
 - [nlp_bert_document-segmentation_chinese-base](https://www.modelscope.cn/models/iic/nlp_bert_document-segmentation_chinese-base)
 
-注意：本项目
+注意：本项目llm使用的是[魔塔](https://www.modelscope.cn/models)的模型，兼容OpenAI的接口，如需要使用本地模型，可以更换json中的`llm_model_id`地址。
 
 ### 6.3 配置文件 `qwen3_config`
 json 配置文件 `config\qwen3_config.json`
