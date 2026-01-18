@@ -231,6 +231,6 @@ class TinyRAG:
         output = self.llm.generate(prompt_text)
         if cite_lines:
             output = (output or "").rstrip() + "\n\n引用信息如下：\n" + "\n".join(cite_lines)
-
+        
         return output
         

@@ -1,6 +1,5 @@
 {
     "db_root_dir": "data/db",
-    "base_dir": "data/wiki_db",
     "llm_model_id": "Qwen/Qwen3-8B",
     "emb_model_id": "models/bge-base-zh-v1.5",
     "ranker_model_id": "models/bge-reranker-base",
