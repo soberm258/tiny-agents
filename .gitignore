@@ -1,5 +1,6 @@
-".env" 
-"eval" 
-"models" 
-"data" 
-"tiny-rag-advanced.txt" 
+.env
+eval
+models
+data 
+tiny-rag-advanced.txt
+__pycache__

@@ -23,8 +23,66 @@ class ReActParseResult:
 
 _RE_THOUGHT = re.compile(r"(?mi)^\s*Thought\s*:\s*(.+)\s*$")
 _RE_ACTION = re.compile(r"(?mi)^\s*Action\s*:\s*(.+)\s*$")
-_RE_ACTION_INPUT = re.compile(r"(?mi)^\s*Action Input\s*:\s*(\{.*\})\s*$")
 _RE_FINAL = re.compile(r"(?mi)^\s*Final\s*:\s*(.+)\s*$", re.DOTALL)
+
+
+def _extract_first_json_value(text: str, *, start: int) -> str:
+    """
+    从 text[start:] 中提取第一个完整的 JSON 值（对象/数组），支持跨多行与 code fence。
+    返回原始 JSON 字符串；失败则返回空字符串。
+    """
+    if not text:
+        return ""
+    start = max(0, int(start))
+
+    brace = text.find("{", start)
+    bracket = text.find("[", start)
+    if brace < 0 and bracket < 0:
+        return ""
+
+    if brace < 0:
+        begin = bracket
+        open_ch, close_ch = "[", "]"
+    elif bracket < 0:
+        begin = brace
+        open_ch, close_ch = "{", "}"
+    else:
+        begin = min(brace, bracket)
+        if begin == brace:
+            open_ch, close_ch = "{", "}"
+        else:
+            open_ch, close_ch = "[", "]"
+
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(begin, len(text)):
+        ch = text[i]
+        if in_str:
+            if esc:
+                esc = False
+                continue
+            if ch == "\\":
+                esc = True
+                continue
+            if ch == '"':
+                in_str = False
+            continue
+
+        if ch == '"':
+            in_str = True
+            continue
+
+        if ch == open_ch:
+            depth += 1
+            continue
+        if ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return text[begin : i + 1].strip()
+            continue
+
+    return ""
 
 
 def parse_react(text: str) -> ReActParseResult:
@@ -45,11 +103,13 @@ def parse_react(text: str) -> ReActParseResult:
     if m_action:
         out.action_name = (m_action.group(1) or "").strip()
 
-    m_input = _RE_ACTION_INPUT.search(text)
+    # Action Input 允许多行 JSON（例如带缩进/换行），因此不能用单行正则强行截取。
+    m_input = re.search(r"(?mi)^\s*Action Input\s*:\s*", text)
     if m_input:
-        raw_json = (m_input.group(1) or "").strip()
+        raw_json = _extract_first_json_value(text, start=m_input.end())
         try:
-            out.action_input = json.loads(raw_json)
+            parsed = json.loads(raw_json) if raw_json else None
+            out.action_input = parsed if isinstance(parsed, dict) else None
         except Exception:
             out.action_input = None
 
@@ -151,4 +211,3 @@ class ReActAgent:
             history = (history + "\n\n" + "\n".join(step_block)).strip()
 
         return "已达到最大步数，仍未得到 Final 输出。你可以尝试缩小问题范围或提高 topk。", history
-

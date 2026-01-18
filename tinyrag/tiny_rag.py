@@ -158,7 +158,7 @@ class TinyRAG:
         """
         self._ensure_single_searcher()
         self.sent_split_model = SentenceSplitter(
-            use_model=False, 
+            use_model=self.config.sent_split_use_model, 
             sentence_size=self.config.sentence_size, 
             model_path=self.config.sent_split_model_id
         )

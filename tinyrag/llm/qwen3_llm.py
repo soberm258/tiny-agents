@@ -5,8 +5,8 @@ from tinyrag.llm.base_llm import BaseLLM
 from dotenv import load_dotenv
 from transformers import AutoTokenizer, AutoConfig 
 import os
-os.environ['HTTP_PROXY'] = '127.0.0.1:7890'
-os.environ['HTTPS_PROXY'] = '127.0.0.1:7890'
+# os.environ['HTTP_PROXY'] = '127.0.0.1:7890'
+# os.environ['HTTPS_PROXY'] = '127.0.0.1:7890'
 import warnings
 warnings.filterwarnings("ignore")
 class qwen3_llm(BaseLLM):
@@ -36,11 +36,19 @@ class qwen3_llm(BaseLLM):
             "temperature": 0
         }
     def generate(self, content: str) -> str:
+        system_guard = (
+            "你是一个严格遵循 ReAct（Thought -> Action -> Observation）范式的智能体。\n"
+            "硬性规则：\n"
+            "1) 绝对禁止输出 Observation（包括以“Observation:”开头的任何文本）；Observation 只能由外部工具执行结果注入。\n"
+            "2) 若你需要调用工具，本轮只输出 Thought/Action/Action Input 三段，并在 Action Input 后立刻结束，不要输出 Final。\n"
+            "3) 只有当你不需要调用任何工具时才输出 Final；输出 Final 时不得包含 Action/Action Input/Observation。\n"
+            
+        )
         messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "system", "content": system_guard},
             {"role": "user", "content": content}
         ]
-
+        # print(f"\n这是调试的输入：\n{messages}")
         try:
             # 关键修改：添加 stream=True 参数
             response = self.client.chat.completions.create(
@@ -56,9 +64,16 @@ class qwen3_llm(BaseLLM):
 
             # 处理流式响应
             full_response = ""
+            # # 调试用
+            # think = ""
             for chunk in response:
                 if chunk.choices[0].delta.content is not None:
                     full_response += chunk.choices[0].delta.content
+                # if chunk.choices[0].delta.reasoning_content is not None:
+                #     think += chunk.choices[0].delta.reasoning_content
+            # print(f"\n\n这是调试的思考：\n{think}")
+            # print(f"\n\n这是调试的回答：\n{full_response}")
+            
 
             return full_response
 
