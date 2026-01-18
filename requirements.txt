@@ -12,10 +12,11 @@ jieba>=0.42.1
 nltk>=3.8
 scikit-learn>=1.3,<2
 scipy<2
+#faiss
 
 # Embedding / Rerank / LLM（本地模型）
-# torch 建议按你的 CUDA 版本单独安装（不要强行 pin 在 requirements 里）
-torchvision>=0.15
+# torch 建议按你的 CUDA 版本单独安装
+#torchvision>=0.15
 transformers==4.48.3
 huggingface-hub>=0.25,<0.26
 accelerate>=0.26
