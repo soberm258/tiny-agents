@@ -1,0 +1,12 @@
+{
+    "db_root_dir": "data/db",
+    "base_dir": "data/wiki_db",
+    "llm_model_id": "models/Qwen2-1.5B-Instruct",
+    "emb_model_id": "models/bge-base-zh-v1.5",
+    "ranker_model_id": "models/bge-reranker-base",
+    "device": "cpu",
+    "sent_split_model_id": "models/nlp_bert_document-segmentation_chinese-base",
+    "sent_split_use_model": false,
+    "sentence_size": 256,
+    "model_type": "qwen2"
+}
