@@ -12,26 +12,8 @@ from tinyrag import BaseLLM, Qwen2LLM, TinyLLM,qwen3_llm
 from tinyrag import Searcher
 from tinyrag.searcher.multi_db_searcher import MultiDBSearcher
 from tinyrag import SentenceSplitter
-from tinyrag.utils import write_list_to_jsonl, resolve_db_dir, make_chunk_id, make_doc_id
-
-
-RAG_PROMPT_TEMPALTE="""参考信息（每段以 [编号] 开头）：
-{context}
----
-我的问题或指令：
-{question}
----
-我的回答：
-{answer}
----
-请根据上述参考信息回答和我的问题或指令，修正我的回答。前面的参考信息和我的回答可能有用，也可能没用，你需要从我给出的参考信息中选出与我的问题最相关的那些，来为你修正的回答提供依据。回答一定要忠于原文，简洁但不丢信息，不要胡乱编造。请在关键结论后标注引用编号，例如 [1][3]。
-你修正的回答:"""
-
-HYDE_PROMPT_TEMPLATE = """你是一名检索增强系统的查询改写器。
-请根据用户问题，写一段“可能出现在知识库/百科/说明文中的答案段落”，用于向量检索召回相关资料。
-要求：只输出正文，不要标题，不要编号，不要引用，不要出现“根据/可能/我认为”等措辞；尽量包含关键实体、别名、时间、地点、定义、要点等信息；长度控制在 200~400 字。
-用户问题：{question}
-正文："""
+from tinyrag.utils import write_list_to_jsonl, resolve_db_dir
+from tinyrag.rag import build_context_and_citations, build_hyde_prompt, build_rag_prompt, chunk_doc_item
 
 @dataclass
 class RAGConfig:
@@ -61,50 +43,6 @@ class RAGConfig:
     emb_weight: float = 1.0
     hyde_use_as_answer: bool = False
 
-def process_docs_text(docs_text, sent_split_model):
-    sent_res = sent_split_model.split_text(docs_text)
-    return sent_res
-
-def process_doc_item(doc_item: Union[str, Dict[str, Any]], sent_split_model, *, min_chunk_len: int) -> List[Dict[str, Any]]:
-    if isinstance(doc_item, dict):
-        text = (doc_item.get("text") or "").strip()
-        meta = doc_item.get("meta") or {}
-        doc_id = str(doc_item.get("id") or meta.get("doc_id") or "")
-        source_path = meta.get("source_path", "")
-        page = int(meta.get("page") or 0)
-        if not doc_id:
-            doc_id = make_doc_id(source_path=source_path, page=page, record_index=int(meta.get("record_index") or 0))
-    else:
-        text = (doc_item or "").strip()
-        meta = {"source_path": ""}
-        doc_id = make_doc_id(source_path="", page=0, record_index=0)
-        source_path = ""
-        page = 0
-
-    if not text:
-        return []
-
-    sent_res = sent_split_model.split_text(text)
-    sent_res = [s for s in sent_res if s and len(s) >= min_chunk_len]
-
-    out: List[Dict[str, Any]] = []
-    for idx, sent in enumerate(sent_res):
-        out_meta = dict(meta)
-        out_meta["chunk_index"] = idx
-        chunk_id = make_chunk_id(doc_id=doc_id, chunk_index=idx)
-        out.append({"id": chunk_id, "text": sent, "meta": out_meta})
-    return out
-# {
-#     "base_dir": "data/wiki_db",
-#     "llm_model_id": "models/Qwen2-1.5B-Instruct",
-#     "emb_model_id": "models/bge-base-zh-v1.5",
-#     "ranker_model_id": "models/bge-reranker-base",
-#     "device": "cpu",
-#     "sent_split_model_id": "models/nlp_bert_document-segmentation_chinese-base",
-#     "sent_split_use_model": false,
-#     "sentence_size": 256,
-#     "model_type": "qwen2"
-# }
 class TinyRAG:
     def __init__(self, config:RAGConfig) -> None:
         print("config: ", config)
@@ -167,7 +105,7 @@ class TinyRAG:
         with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
             future_to_item = {
                 executor.submit(
-                    process_doc_item,
+                    chunk_doc_item,
                     item,
                     self.sent_split_model,
                     min_chunk_len=self.config.min_chunk_len,
@@ -222,7 +160,7 @@ class TinyRAG:
         llm_result_txt = ""
         hyde_text = ""
         if strategy == "hyde":
-            hyde_prompt = HYDE_PROMPT_TEMPLATE.format(question=query)
+            hyde_prompt = build_hyde_prompt(query)
             hyde_text = (self.llm.generate(hyde_prompt) or "").strip()
             if self.config.hyde_use_as_answer:
                 llm_result_txt = hyde_text
@@ -285,33 +223,9 @@ class TinyRAG:
                 search_content_list = self.searcher.search(query=search_query, top_n=top_n)
 
         chunks = [item[1] for item in search_content_list]
-        context_lines: List[str] = []
-        cite_lines: List[str] = []
-        for i, chunk in enumerate(chunks, start=1):
-            if isinstance(chunk, dict):
-                text = (chunk.get("text") or "").strip()
-                meta = chunk.get("meta") or {}
-                src = meta.get("source_path") or ""
-                page = meta.get("page") or ""
-                context_lines.append(f"[{i}] {text}")
-                if src:
-                    if page:
-                        cite_lines.append(f"[{i}] {src} 第{page}页")
-                    else:
-                        cite_lines.append(f"[{i}] {src}")
-                else:
-                    cite_lines.append(f"[{i}] 未知来源")
-            else:
-                context_lines.append(f"[{i}] {str(chunk)}")
-                cite_lines.append(f"[{i}] 未知来源")
-
-        context = "\n".join(context_lines)
+        context, cite_lines = build_context_and_citations(chunks)
         # 构造 prompt
-        prompt_text = RAG_PROMPT_TEMPALTE.format(
-            context=context,
-            question=query,
-            answer=llm_result_txt
-        )
+        prompt_text = build_rag_prompt(context=context, question=query, answer=llm_result_txt)
         logger.info("prompt: {}".format(prompt_text))
         # 生成最终答案
         output = self.llm.generate(prompt_text)
