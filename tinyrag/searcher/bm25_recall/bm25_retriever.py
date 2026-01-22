@@ -36,7 +36,8 @@ class BM25Retriever:
         """ 使用jieba进行中文分词。
         """
         if isinstance(item, dict):
-            text = item.get("text") or ""
+            # 索引增强：优先使用 index_text（包含法名/编章节条等定位信息）
+            text = item.get("index_text") or item.get("text") or ""
         else:
             text = str(item or "")
         return list(jieba.cut_for_search(text))

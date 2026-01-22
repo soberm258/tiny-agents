@@ -21,7 +21,8 @@ EmbRecallItem = Tuple[int, Any, float]
 
 def _to_text(item: Any) -> str:
     if isinstance(item, dict):
-        return str(item.get("text") or "")
+        # 索引增强：优先使用 index_text（包含法名/编章节条等定位信息）
+        return str(item.get("index_text") or item.get("text") or "")
     return str(item or "")
 
 

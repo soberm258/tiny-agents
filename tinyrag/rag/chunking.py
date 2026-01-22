@@ -15,6 +15,29 @@ def _is_law_doc(meta: Dict[str, Any]) -> bool:
     return bool(meta.get("law") or meta.get("article") or meta.get("book") or meta.get("chapter"))
 
 
+def _law_index_prefix(meta: Dict[str, Any]) -> str:
+    law = str(meta.get("law") or "").strip()
+    book = str(meta.get("book") or "").strip()
+    chapter = str(meta.get("chapter") or "").strip()
+    section = str(meta.get("section") or "").strip() or "未分节"
+    article = str(meta.get("article") or "").strip()
+
+    # 常见写法：用户会输入“刑法/宪法/民法典”而不带“中华人民共和国”
+    alias = ""
+    if law.startswith("中华人民共和国") and len(law) > len("中华人民共和国"):
+        alias = law[len("中华人民共和国") :].strip()
+
+    parts = []
+    if law:
+        parts.append(f"《{law}》")
+    if alias and alias != law:
+        parts.append(f"（简称：{alias}）")
+    for p in (book, chapter, section, article):
+        if p:
+            parts.append(p)
+    return " ".join(parts).strip()
+
+
 def _merge_law_sentences(
     sents: List[str],
     *,
@@ -102,9 +125,13 @@ def chunk_doc_item(
     sent_res = [s for s in sent_res if s and len(s) >= int(min_chunk_len)]
 
     out: List[Dict[str, Any]] = []
+    law_prefix = _law_index_prefix(meta) if _is_law_doc(meta) else ""
     for idx, sent in enumerate(sent_res):
         out_meta = dict(meta)
         out_meta["chunk_index"] = idx
         chunk_id = make_chunk_id(doc_id=doc_id, chunk_index=idx)
-        out.append({"id": chunk_id, "text": sent, "meta": out_meta})
+        chunk: Dict[str, Any] = {"id": chunk_id, "text": sent, "meta": out_meta}
+        if law_prefix:
+            chunk["index_text"] = (law_prefix + "\n" + sent).strip()
+        out.append(chunk)
     return out

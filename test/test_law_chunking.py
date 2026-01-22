@@ -27,11 +27,15 @@ def test_law_article_enumeration_should_merge() -> None:
     assert chunks, "应当生成至少一个 chunk"
     # 期望枚举项不要每行一个 chunk（至少前两行应当在同一个 chunk 里）
     first_text = chunks[0]["text"]
+    first_index = chunks[0].get("index_text", "")
     assert "第一百七十九条" in first_text
     assert "（一）停止侵害" in first_text
+    assert "中华人民共和国民法典" in first_index
+    assert "第一编 总则" in first_index
+    assert "第八章 民事责任" in first_index
+    assert "第一百七十九条" in first_index
 
 
 if __name__ == "__main__":
     test_law_article_enumeration_should_merge()
     print("ok")
-
