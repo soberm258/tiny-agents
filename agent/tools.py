@@ -212,29 +212,114 @@ def format_observation_for_prompt(result: Dict[str, Any], *, max_chars_per_item:
             if source_path:
                 return f"{source_path} | {loc}"
             return loc
+        # 案例 PDF：优先展示章节与页范围定位
+        if meta.get("pdf_mode") == "case" or meta.get("case_title") or meta.get("case_para_start") or meta.get("case_para_end"):
+            parts: List[str] = []
+            if source_path:
+                parts.append(source_path)
+            title = str(meta.get("case_title") or "").strip()
+            if title:
+                parts.append(title)
+            ps = meta.get("page_start")
+            pe = meta.get("page_end")
+            if ps and pe:
+                parts.append(f"第{ps}~{pe}页")
+            elif page:
+                parts.append(f"第{page}页")
+            sections = meta.get("case_sections") or []
+            if isinstance(sections, list) and sections:
+                uniq: List[str] = []
+                seen = set()
+                for s in [str(x).strip() for x in sections if str(x).strip()]:
+                    if s not in seen:
+                        uniq.append(s)
+                        seen.add(s)
+                if uniq:
+                    parts.append("章节=" + ",".join(uniq))
+            return " | ".join([p for p in parts if p]).strip() or (source_path or "未知来源")
         if source_path:
             if page:
                 return f"{source_path} 第{page}页"
             return source_path
         return "未知来源"
 
+    def expand_case_blocks(meta: Dict[str, Any]) -> str:
+        source_path = str(meta.get("source_path") or "").strip()
+        if not source_path:
+            return ""
+
+        # 缓存：避免同一案例重复解析 PDF
+        cache: Dict[str, Dict[str, Any]] = getattr(format_observation_for_prompt, "_case_cache", {})
+        if not isinstance(cache, dict):
+            cache = {}
+
+        if source_path not in cache:
+            try:
+                from pathlib import Path
+
+                from tinyrag.ingest.readers.pdf_reader import read_case_pdf_sections
+
+                cache[source_path] = read_case_pdf_sections(Path(source_path))
+            except Exception:
+                cache[source_path] = {}
+            setattr(format_observation_for_prompt, "_case_cache", cache)
+
+        data = cache.get(source_path) or {}
+        title = str(data.get("case_title") or meta.get("case_title") or "").strip()
+        secs = data.get("sections") or {}
+        if not isinstance(secs, dict):
+            secs = {}
+
+        def sec_block(name: str) -> str:
+            body = str(secs.get(name) or "").strip()
+            if not body:
+                return ""
+            return f"【{name}】\n{body}".strip()
+
+        blocks = [b for b in [sec_block("基本案情"), sec_block("裁判理由"), sec_block("裁判要旨")] if b]
+        if not blocks:
+            return ""
+        head = title.strip()
+        if head:
+            return (head + "\n" + "\n\n".join(blocks)).strip()
+        return "\n\n".join(blocks).strip()
+
     items = result.get("items") or []
     lines: List[str] = []
     err = result.get("error")
     if err:
         lines.append(f"error={err}")
+    seen_case_sources: set[str] = set()
+    display_rank = 0
     for item in items:
-        rank = item.get("rank")
+        meta = item.get("meta") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        url = meta.get("url", "")
+
+        is_case = bool(meta.get("pdf_mode") == "case" or meta.get("case_title") or meta.get("case_para_start") or meta.get("case_para_end"))
+        if is_case:
+            source_path = str(meta.get("source_path") or "").strip()
+            if source_path and source_path in seen_case_sources:
+                continue
+            if source_path:
+                seen_case_sources.add(source_path)
+
+            expanded = expand_case_blocks(meta)
+            if expanded:
+                display_rank += 1
+                # 案例证据：保留换行，整块给出“基本案情/裁判理由/裁判要旨”
+                lines.append(f"[{display_rank}] {expanded}")
+                lines.append(f"source={url if url else format_source(meta)}")
+                continue
+
+        # 默认：沿用原逻辑（压缩换行并截断）
+        display_rank += 1
         text = str(item.get("text") or "").strip().replace("\n", " ")
         if max_chars_per_item and len(text) > max_chars_per_item:
             text = text[:max_chars_per_item] + "..."
-        meta = item.get("meta") or {}
-        url = meta.get("url", "")
-        lines.append(f"[{rank}] {text}")
-        if url:
-            lines.append(f"source={url}")
-        else:
-            lines.append(f"source={format_source(meta) if isinstance(meta, dict) else '未知来源'}")
+        lines.append(f"[{display_rank}] {text}")
+        lines.append(f"source={url if url else format_source(meta)}")
     if not items and not err:
         lines.append("（无结果）")
     return "\n".join(lines).strip()

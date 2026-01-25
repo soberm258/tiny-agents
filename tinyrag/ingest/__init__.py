@@ -10,7 +10,7 @@ from .readers.common import read_text_file
 from .readers.docx_reader import read_docx_to_text
 from .readers.json_reader import extract_texts_from_json_obj, read_json_file, read_jsonl_file
 from .readers.md_reader import read_md_file_to_text
-from .readers.pdf_reader import read_pdf_pages
+from .readers.pdf_reader import detect_case_pdf_like, read_case_pdf_paragraphs, read_pdf_pages
 from .readers.pptx_reader import read_pptx_to_text
 from .structured.law_cn_civil_code import detect_cn_law_like, parse_cn_law_text
 
@@ -22,6 +22,7 @@ def load_docs_for_build(
     recursive: bool = True,
     suffix_allowlist: Optional[Iterable[str]] = None,
     txt_mode: str = "auto",
+    pdf_mode: str = "auto",
 ) -> List[Dict[str, Any]]:
     """
     将输入（文件或目录）读取为 build 可用的文档列表。
@@ -59,12 +60,40 @@ def load_docs_for_build(
 
         try:
             if suffix == "pdf":
-                pages = read_pdf_pages(file_path)
-                for idx, t in enumerate(pages, start=1):
-                    meta = {"source_path": str(file_path), "page": idx, "type": "pdf"}
-                    doc_id = make_doc_id(source_path=str(file_path), page=idx, record_index=0)
+                mode = (pdf_mode or "auto").lower().strip()
+                if mode not in ("auto", "pages", "case"):
+                    mode = "auto"
+
+                is_case = False
+                if mode == "case":
+                    is_case = True
+                elif mode == "auto":
+                    # 约定：路径包含 case/案例 的优先按案例 PDF 解析；否则尝试轻量探测
+                    parts = {p.lower() for p in file_path.parts}
+                    is_case = ("case" in parts) or any("案例" in p for p in file_path.parts) or detect_case_pdf_like(file_path)
+
+                if is_case:
+                    parsed = read_case_pdf_paragraphs(file_path)
+                    meta = {
+                        "source_path": str(file_path),
+                        "type": "pdf",
+                        "pdf_mode": "case",
+                        "case_title": str(parsed.get("case_title") or "").strip(),
+                        "case_degraded": bool(parsed.get("degraded")),
+                        # 默认只嵌入关键章节：可在调用方覆盖
+                        "case_embed_sections": ["基本案情", "裁判理由"],
+                        "case_paragraphs": list(parsed.get("paragraphs") or []),
+                    }
+                    doc_id = make_doc_id(source_path=str(file_path), page=0, record_index=0)
                     meta["doc_id"] = doc_id
-                    docs.append({"id": doc_id, "text": t, "meta": meta})
+                    docs.append({"id": doc_id, "text": meta["case_title"] or doc_id, "meta": meta})
+                else:
+                    pages = read_pdf_pages(file_path)
+                    for idx, t in enumerate(pages, start=1):
+                        meta = {"source_path": str(file_path), "page": idx, "type": "pdf"}
+                        doc_id = make_doc_id(source_path=str(file_path), page=idx, record_index=0)
+                        meta["doc_id"] = doc_id
+                        docs.append({"id": doc_id, "text": t, "meta": meta})
 
             elif suffix == "txt":
                 text = read_text_file(file_path)

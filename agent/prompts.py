@@ -22,7 +22,8 @@ Action Input: <JSON对象>
          引用信息如下：
          [1]<tool_name> source=<直接复制 Observation 中该条的 source=... 内容>
          [2]<tool_name> source=<...>
-         其中 source 对于法律文本应包含“文件路径 | 法名 | 编 | 章 | 节 | 条”，确保可定位到具体法条。>
+         其中 source 对于法律文本应包含“文件路径 | 法名 | 编 | 章 | 节 | 条”，确保可定位到具体法条。
+         其中 source 对于案件信息,应该提到“参考案例中”>
 
 硬性禁止（违反即视为错误输出）：
 1) 绝对禁止在你的输出中包含以 “Observation:” 开头的内容；Observation 只能由外部工具执行结果注入。
