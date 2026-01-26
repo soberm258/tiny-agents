@@ -24,7 +24,7 @@ def read_json(path: str):
 def main() -> None:
     parser = argparse.ArgumentParser(description="TinyRAG ReAct Agent Demo（单库，默认 HyDE+RRF+rerank）")
     parser.add_argument("--config", type=str, default="config/qwen3_config.json")
-    parser.add_argument("--db-name", type=str, required=True, help="data/db 下的库名（目录名）")
+    # parser.add_argument("--db-name", type=str, required=True, help="data/db 下的库名（目录名）")
     parser.add_argument("--db-root-dir", type=str, default="", help="默认读取 config 中的 db_root_dir")
     parser.add_argument("--topk", type=int, default=5)
     parser.add_argument("--max-steps", type=int, default=6)
@@ -43,41 +43,50 @@ def main() -> None:
 
     cfg = read_json(args.config)
     db_root_dir = args.db_root_dir.strip() or str(cfg.get("db_root_dir") or "data/db")
-    base_dir = resolve_db_dir(db_root_dir, db_name=args.db_name)
-    if not base_dir or not os.path.isdir(base_dir):
-        raise FileNotFoundError(f"数据库目录不存在：{base_dir}")
+    base_dirs = [] 
+    faiss_dirs = []
+    base_dirs.append(resolve_db_dir(db_root_dir, db_name="law")) 
+    base_dirs.append(resolve_db_dir(db_root_dir, db_name="case"))
+    for base_dir in base_dirs:
+        if not base_dir or not os.path.isdir(base_dir):
+            raise FileNotFoundError(f"数据库目录不存在：{base_dir}")
 
-    print(f"数据库目录：{base_dir}", flush=True)
-    faiss_dir = os.path.join(base_dir, "faiss_idx")
-    if os.path.isdir(faiss_dir):
-        try:
-            idx_dir = os.path.join(faiss_dir, "index_768")
-            inv = os.path.join(idx_dir, "invert_index.faiss")
-            fwd = os.path.join(idx_dir, "forward_index.txt")
-            if os.path.isfile(inv):
-                print(f"向量索引文件：{inv}（约 {os.path.getsize(inv)/1024/1024:.1f} MB）", flush=True)
-            if os.path.isfile(fwd):
-                print(f"向量前排索引：{fwd}（约 {os.path.getsize(fwd)/1024/1024:.1f} MB）", flush=True)
-        except Exception:
-            pass
+        print(f"数据库目录：{base_dir}", flush=True)
+        faiss_dirs.append(os.path.join(base_dir, "faiss_idx"))  
+    for faiss_dir in faiss_dirs:
+        if os.path.isdir(faiss_dir):
+            try:
+                idx_dir = os.path.join(faiss_dir, "index_768")
+                inv = os.path.join(idx_dir, "invert_index.faiss")
+                fwd = os.path.join(idx_dir, "forward_index.txt")
+                if os.path.isfile(inv):
+                    print(f"向量索引文件：{inv}（约 {os.path.getsize(inv)/1024/1024:.1f} MB）", flush=True)
+                if os.path.isfile(fwd):
+                    print(f"向量前排索引：{fwd}（约 {os.path.getsize(fwd)/1024/1024:.1f} MB）", flush=True)
+            except Exception:
+                pass
 
     device = str(cfg.get("device") or "cpu")
-    searcher = Searcher(
-        emb_model_id=str(cfg["emb_model_id"]),
-        ranker_model_id=str(cfg["ranker_model_id"]),
-        device=device,
-        base_dir=base_dir,
-    )
-
+    searchers = []
+    for base_dir in base_dirs:
+        searcher = Searcher(
+            emb_model_id=str(cfg["emb_model_id"]),
+            ranker_model_id=str(cfg["ranker_model_id"]),
+            device=device,
+            base_dir=base_dir,
+        )
+        searchers.append(searcher)
+    
     print("开始加载数据库（大库可能需要几十秒到数分钟）...", flush=True)
     t0 = time.time()
-    searcher.load_db()
+    for searcher in searchers:
+        searcher.load_db()
     print(f"数据库加载完成，耗时 {time.time()-t0:.1f}s", flush=True)
 
     llm = qwen3_llm(model_id_key=str(cfg.get("llm_model_id") or "Qwen/Qwen3-8B"), device=device)
 
     rag_tool = RAGSearchTool(
-        searcher=searcher,
+        searchers=searchers,
         llm=llm,
         recall_factor=int(cfg.get("recall_factor") or 4),
         rrf_k=int(cfg.get("rrf_k") or 60),

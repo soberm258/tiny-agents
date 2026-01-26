@@ -14,14 +14,14 @@ class RAGSearchTool(BaseTool):
     def __init__(
         self,
         *,
-        searcher: "Searcher",
+        searchers: List[Searcher],
         llm: Any,
         recall_factor: int = 4,
         rrf_k: int = 60,
         bm25_weight: float = 1.0,
         emb_weight: float = 1.0,
     ) -> None:
-        self._searcher = searcher
+        self._searchers = searchers
         self._llm = llm
         self._recall_factor = recall_factor
         self._rrf_k = rrf_k
@@ -32,7 +32,11 @@ class RAGSearchTool(BaseTool):
     def spec(self) -> ToolSpec:
         return ToolSpec(
             name="rag_search",
-            description="在当前数据库中进行证据检索（默认策略：HyDE + RRF + rerank），返回带元数据的片段列表。",
+            description="在当前数据库中进行证据检索（默认策略：HyDE + RRF + rerank），返回带元数据的片段列表。" \
+            "目前支持两个数据库：law（法律法规）和 case（司法案例）。" \
+            "当你需要从法律法规或司法案例中寻找答案时使用。" \
+            "用户询问法律问题时，必须查找law库，而case库可选择作为案例补充使用" \
+            "注意，使用case库时,topk不宜过大，推荐为'topk: 3'，以免返回过多无关案例片段影响回答质量。",
         )
 
     def prompt_usage(self) -> str:
@@ -41,6 +45,7 @@ class RAGSearchTool(BaseTool):
             "{\n"
             '  "query": "用户问题/检索查询（必填）",\n'
             '  "topk": 5\n'
+            '  "db_name": "law" 或 "case" （必填，选择使用的数据库）\n'
             "}\n"
         )
 
@@ -57,18 +62,31 @@ class RAGSearchTool(BaseTool):
         hyde_text = (self._llm.generate(hyde_prompt) or "").strip()
         if (not hyde_text) or ("生成失败" in hyde_text) or ("API调用失败" in hyde_text):
             hyde_text = query
-
-        reranked = self._searcher.search_advanced(
-            rerank_query=query,
-            bm25_query=query,
-            emb_query_text=hyde_text,
-            top_n=topk,
-            recall_k=recall_k,
-            fusion_method="rrf",
-            rrf_k=self._rrf_k,
-            bm25_weight=self._bm25_weight,
-            emb_weight=self._emb_weight,
-        )
+        db_name = str(kwargs.get("db_name") or "").strip()
+        if db_name=="law":
+            reranked = self._searchers[0].search_advanced(
+                rerank_query=query,
+                bm25_query=query,
+                emb_query_text=hyde_text,
+                top_n=topk,
+                recall_k=recall_k,
+                fusion_method="rrf",
+                rrf_k=self._rrf_k,
+                bm25_weight=self._bm25_weight,
+                emb_weight=self._emb_weight,
+            )
+        elif db_name=="case":
+            reranked = self._searchers[1].search_advanced(
+                rerank_query=query,
+                bm25_query=query,
+                emb_query_text=hyde_text,
+                top_n=topk,
+                recall_k=recall_k,
+                fusion_method="rrf",
+                rrf_k=self._rrf_k,
+                bm25_weight=self._bm25_weight,
+                emb_weight=self._emb_weight,
+            )
 
         items: List[Dict[str, Any]] = []
         for i, (score, item) in enumerate(reranked, start=1):
@@ -120,7 +138,8 @@ class SearchOnlineTool(BaseTool):
     def spec(self) -> ToolSpec:
         return ToolSpec(
             name="search_online",
-            description="网页搜索引擎（SerpApi）。当你需要回答时事、事实，或你认为知识库信息不足时使用。",
+            description="网页搜索引擎（SerpApi）。当你需要回答时事、事实，或你认为知识库信息不足时使用。" \
+            "当用户问题包含'近期'，'最近','最新','现在','当前','当下'等时间词时，考虑使用该工具。",
         )
 
     def prompt_usage(self) -> str:

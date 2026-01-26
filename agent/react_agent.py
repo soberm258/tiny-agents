@@ -124,7 +124,7 @@ class ReActAgent:
         tool_executor: ToolExecutor,
         max_steps: int = 6,
         default_topk: int = 5,
-        max_tool_calls: int = 2,
+        max_tool_calls: int = 5,
         llm_timeout_sec: int = 180,
     ) -> None:
         self.llm = llm
@@ -160,7 +160,7 @@ class ReActAgent:
                 self._safe_print(f"\n--- 第 {step} 步 ---")
                 self._safe_print("🧠 正在调用大语言模型...")
 
-            prompt = render_prompt(tools=tools_txt, question=question, history=history)
+            prompt = render_prompt(tools=tools_txt, question=question, history=history, tool_times=self.max_tool_calls)
             t0 = time.time()
             model_out = (self._call_llm(prompt) or "").strip()
             parsed = parse_react(model_out)
